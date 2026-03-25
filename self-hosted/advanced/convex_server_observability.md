@@ -1,0 +1,308 @@
+# Convex Server Observability
+
+This is our working reference for observing a self-hosted Convex backend without
+making Convex code changes.
+
+Scope:
+
+- Focus on the Convex server only
+- Ignore Postgres internals
+- No Convex source changes
+- Treat this document as the baseline and update it whenever we change our
+  deployment, logging, scraping, or debugging approach
+
+## Goals
+
+We want the best possible visibility into:
+
+- HTTP request latency inside the Convex server
+- WebSocket and reactive query latency
+- Per-function latency, cache behavior, and concurrency
+- Request-by-request execution details from Convex itself
+
+We do not get a built-in full internal waterfall for every request without code
+changes, but we can get very close by combining Convex metrics, Convex
+execution streams, and the self-hosted dashboard.
+
+## Concrete Plan
+
+1. Run the backend in observability mode
+2. Scrape Convex's built-in `/metrics` endpoint with Prometheus
+3. Use Grafana for server-wide latency dashboards
+4. Use the self-hosted Convex dashboard for per-function metrics and live logs
+5. Collect `stream_udf_execution` / `stream_function_logs` for request-by-request
+   drill-down
+6. Keep a short-lived incident mode for deeper cache and subscription insight
+
+## Backend Runtime Settings
+
+Use these as the default backend settings:
+
+```yaml
+environment:
+  LOG_FORMAT: json
+  RUST_LOG: info
+```
+
+Notes:
+
+- `LOG_FORMAT=json` makes backend service logs machine-parsable.
+- Start with `RUST_LOG=info`; only raise specific modules when debugging.
+- If we build our own image, prefer `--build-arg debug=1` so the binary is not
+  stripped. That helps `perf` and eBPF tooling later.
+
+## Required Services
+
+Keep these running alongside the Convex backend:
+
+- Prometheus scraping Convex `/metrics`
+- Grafana for dashboards and alerting
+- The self-hosted Convex dashboard for per-function metrics and live logs
+- Optional log storage such as Loki or ELK for backend JSON logs
+
+The self-hosted flow for generating the admin key and opening the dashboard is
+documented in `self-hosted/README.md`.
+
+## Prometheus Scrape Config
+
+Minimal scrape job:
+
+```yaml
+scrape_configs:
+  - job_name: convex
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["backend:3210"]
+```
+
+Convex exposes `/metrics` by default unless `DISABLE_METRICS_ENDPOINT=true`.
+
+## What To Watch In Grafana
+
+### HTTP
+
+- `http_handle_duration_seconds`
+  - Total time spent handling HTTP requests inside Convex
+  - Group by `endpoint`, `method`, and `status`
+
+Recommended query:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le, endpoint, method, status) (
+    rate(http_handle_duration_seconds_bucket[5m])
+  )
+)
+```
+
+### WebSocket / Sync Transport
+
+- `backend_ws_upgrade_seconds`
+  - WebSocket upgrade latency
+- `backend_ping_pong_seconds`
+  - Approximate WebSocket round-trip time
+- `backend_ws_send_delay_seconds`
+  - Delay between generating a sync message and actually sending it
+- `sync_protocol_websockets_total`
+  - Number of active WebSocket connections
+
+Recommended queries:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le, endpoint) (
+    rate(backend_ws_send_delay_seconds_bucket[5m])
+  )
+)
+
+sum(sync_protocol_websockets_total)
+```
+
+### Reactive Query Pipeline
+
+- `sync_update_queries_seconds`
+  - Time spent refreshing and rerunning reactive queries
+- `modify_query_to_transition_seconds`
+  - Time from `ModifyQuerySet` to sending the transition back to the client
+- `sync_process_client_message_seconds`
+  - Delay between receiving a WebSocket client message and processing it
+- `sync_mutation_queue_seconds`
+  - Queueing delay for mutations inside the single-threaded sync worker
+- `sync_query_invalidation_lag_seconds`
+  - Time from invalidating write to query rerun
+- `sync_worker_query_retry_total`
+  - Query retries in the sync worker
+- `sync_query_result_dedup_total`
+  - Count of query reruns that produced the same value and were deduped
+
+Recommended queries:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le, partition_id) (
+    rate(sync_update_queries_seconds_bucket[5m])
+  )
+)
+
+histogram_quantile(
+  0.95,
+  sum by (le, partition_id) (
+    rate(modify_query_to_transition_seconds_bucket[5m])
+  )
+)
+
+histogram_quantile(
+  0.95,
+  sum by (le, partition_id) (
+    rate(sync_query_invalidation_lag_seconds_bucket[5m])
+  )
+)
+
+rate(sync_worker_query_retry_total[5m])
+```
+
+### Payload / Message Size
+
+- `ws_client_message_bytes`
+- `sync_transition_message_size_bytes`
+
+Use these to catch large request payloads and oversized reactive transitions.
+
+## Use The Convex Dashboard For Per-Function Insight
+
+The dashboard is the easiest no-code way to inspect function-level behavior.
+
+Use the dashboard views backed by these routes under `/api/app_metrics/*`:
+
+- `latency_percentiles`
+- `cache_hit_percentage`
+- `cache_hit_percentage_top_k`
+- `udf_rate`
+- `function_call_count_top_k`
+- `function_concurrency`
+- `scheduled_job_lag`
+- `table_rate`
+
+These are the best built-in sources for answering:
+
+- Which function is slow?
+- Is the slowness caused by cache misses?
+- Is concurrency or queueing rising?
+- Is reactive invalidation lag growing?
+
+## Collect Execution Streams For Request-Level Drill-Down
+
+For deeper analysis, use these backend endpoints:
+
+- `/api/stream_udf_execution`
+- `/api/stream_function_logs`
+
+These streams are the highest-signal no-code source for "what happened inside
+Convex for this request?"
+
+Key fields available in function completion events:
+
+- `request_id`
+- `execution_id`
+- `parent_execution_id`
+- `identifier`
+- `udf_type`
+- `execution_time`
+- `user_execution_time`
+- `cached_result`
+- `usage_stats`
+- `occ_info.retry_count`
+
+Use them to reconstruct execution trees such as:
+
+- root action -> child query -> child mutation
+- root HTTP request -> function execution -> nested internal call
+
+Operational notes:
+
+- These are long-poll endpoints, not WebSockets.
+- They return after up to 60 seconds even when idle, so they are easy to poll
+  from an external collector.
+- The dashboard and CLI already rely on these surfaces.
+
+## Incident Mode
+
+Use this only temporarily during active debugging:
+
+```yaml
+environment:
+  LOG_FORMAT: json
+  RUST_LOG: info,application::cache=debug
+  SUBSCRIPTION_PROCESS_LOG_ENTRY_TRACING_THRESHOLD: "0"
+  SUBSCRIPTION_ADVANCE_LOG_TRACING_THRESHOLD: "0"
+```
+
+What this adds:
+
+- Cache hit/wait/execute decisions from `application::cache`
+- Much more logging around subscription invalidation and advancement
+
+Only enable these settings for short periods because they are noisier and may
+increase overhead.
+
+## Optional Escalations
+
+These still avoid Convex code changes:
+
+- Build with `--build-arg debug=1` to keep symbols for `perf` or eBPF profiling
+- Use host-level `perf`, `bpftrace`, Parca, or Pyroscope eBPF when CPU time is
+  unclear from metrics alone
+- Send backend stdout/stderr JSON logs to Loki or ELK for search and retention
+
+## What This Setup Can Answer Well
+
+- Is the backend HTTP handler slow?
+- Is WebSocket send delay increasing?
+- Are reactive query refreshes slow?
+- Are transitions large?
+- Which UDFs are slow?
+- Which UDFs are missing cache most often?
+- Are queueing and concurrency rising?
+- Which request IDs had slow executions, retries, or nested calls?
+
+## What This Setup Still Cannot Fully Show
+
+Without changing Convex source, we still do not get a fully stitched internal
+waterfall that breaks a single request into every internal phase, such as:
+
+- auth
+- cache lookup
+- in-memory index hit vs snapshot-cache hit
+- invalidation processing
+- exact sync-worker sub-steps
+- final server-to-client push as one joined timeline
+
+We can infer most of that behavior from metrics and execution streams, but it is
+still manual.
+
+## Default Operating Procedure
+
+When something is slow:
+
+1. Check Grafana for `http_handle_duration_seconds`
+2. Check sync and WebSocket panels for `sync_update_queries_seconds`,
+   `modify_query_to_transition_seconds`, and `backend_ws_send_delay_seconds`
+3. Open the Convex dashboard and inspect per-function latency percentiles and
+   cache hit percentage
+4. Pull execution events from `stream_udf_execution` for the affected time range
+5. If the issue is still unclear, temporarily enable incident mode
+
+## Maintenance Rule
+
+Whenever we change any of the following, update this document:
+
+- backend runtime env vars
+- Prometheus scrape settings
+- Grafana dashboards or alert thresholds
+- log collection approach
+- incident-mode settings
+- request-level collection workflow
