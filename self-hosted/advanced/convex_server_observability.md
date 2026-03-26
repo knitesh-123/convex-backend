@@ -129,8 +129,9 @@ Important rules:
 Backend droplet:
 
 - `self-hosted/docker/docker-compose.yml`
-- `self-hosted/docker/docker-compose.backend-observability.yml`
+- `self-hosted/docker/docker-compose.backend-droplet.yml`
 - `self-hosted/docker/.env.backend.example`
+- `self-hosted/docker/setup_backend_droplet.sh`
 
 Observability droplet:
 
@@ -161,29 +162,46 @@ cp self-hosted/docker/.env.backend.example self-hosted/docker/.env.backend
 - all R2 bucket variables
 - `CONVEX_CLOUD_ORIGIN`
 - `CONVEX_SITE_ORIGIN`
+- `CONVEX_DASHBOARD_ORIGIN`
 - `NEXT_PUBLIC_DEPLOYMENT_URL`
+- `CADDY_EMAIL`
+- `DASHBOARD_BASIC_AUTH_USERNAME`
+- `DASHBOARD_BASIC_AUTH_PASSWORD`
 
-4. Start the backend stack:
+4. Point DNS for the three public hostnames to the backend droplet before
+running the setup script:
+
+- API hostname from `CONVEX_CLOUD_ORIGIN`
+- site hostname from `CONVEX_SITE_ORIGIN`
+- dashboard hostname from `CONVEX_DASHBOARD_ORIGIN`
+
+5. Run the end-to-end backend setup script:
+
+```sh
+sudo bash self-hosted/docker/setup_backend_droplet.sh
+```
+
+The script will:
+
+- install Docker and the Docker Compose plugin if needed
+- install Caddy if needed
+- write `/etc/caddy/Caddyfile` from the env file
+- start Caddy
+- start the backend, dashboard, and metrics adapter containers
+- validate the local services
+- print the generated Convex admin key
+
+6. If you prefer not to use the script, you can still start only the Docker
+stack manually:
 
 ```sh
 docker compose \
   --env-file self-hosted/docker/.env.backend \
-  -f self-hosted/docker/docker-compose.yml \
-  -f self-hosted/docker/docker-compose.backend-observability.yml \
+  -f self-hosted/docker/docker-compose.backend-droplet.yml \
   up -d
 ```
 
-5. Generate the admin key from the running backend image:
-
-```sh
-docker compose \
-  --env-file self-hosted/docker/.env.backend \
-  -f self-hosted/docker/docker-compose.yml \
-  -f self-hosted/docker/docker-compose.backend-observability.yml \
-  exec backend sh -lc './generate_key "$INSTANCE_NAME" "$INSTANCE_SECRET"'
-```
-
-6. Verify the backend and metrics adapter:
+7. Verify the backend and metrics adapter:
 
 ```sh
 curl -f http://127.0.0.1:3210/version
@@ -248,8 +266,7 @@ Backend droplet:
 ```sh
 docker compose \
   --env-file self-hosted/docker/.env.backend \
-  -f self-hosted/docker/docker-compose.yml \
-  -f self-hosted/docker/docker-compose.backend-observability.yml \
+  -f self-hosted/docker/docker-compose.backend-droplet.yml \
   down
 ```
 
