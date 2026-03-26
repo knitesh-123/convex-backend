@@ -22,14 +22,14 @@ We want the best possible visibility into:
 
 We do not get a built-in full internal waterfall for every request without code
 changes, but we can get very close by combining Convex metrics, Convex
-execution streams, and the self-hosted dashboard.
+execution streams, and direct app-metrics APIs.
 
 ## Concrete Plan
 
 1. Run the backend in observability mode
 2. Scrape Convex's built-in `/metrics` endpoint with VictoriaMetrics
 3. Use Grafana for server-wide latency dashboards
-4. Use the self-hosted Convex dashboard for per-function metrics and live logs
+4. Use Grafana plus Convex app-metrics and execution-log APIs for drill-down
 5. Collect `stream_udf_execution` / `stream_function_logs` for request-by-request
    drill-down
 6. Keep a short-lived incident mode for deeper cache and subscription insight
@@ -84,7 +84,6 @@ Default ports:
 
 - Convex backend: `3210`
 - Convex site proxy / HTTP actions: `3211`
-- Convex dashboard: `6791`
 - VictoriaMetrics: `8428`
 - Grafana: `3000`
 
@@ -98,7 +97,6 @@ Edit `self-hosted/docker/.env.observability` to change any of the following:
 - `OBSERVABILITY_BACKEND_IMAGE`
 - `PORT`
 - `SITE_PROXY_PORT`
-- `DASHBOARD_PORT`
 - `VICTORIAMETRICS_PORT`
 - `GRAFANA_PORT`
 - `DISABLE_METRICS_ENDPOINT`
@@ -112,7 +110,7 @@ Edit `self-hosted/docker/.env.observability` to change any of the following:
 For a production-ish setup where the Convex server stays disposable, use two
 hosts:
 
-- Backend droplet: Convex backend, Convex dashboard, and `metricsadapter`
+- Backend droplet: Convex backend and `metricsadapter`
 - Observability droplet: VictoriaMetrics and Grafana
 - External services: SQL database and S3-compatible object storage such as R2
 
@@ -122,13 +120,13 @@ Important rules:
   deployment.
 - Use a fresh database when creating a brand-new deployment.
 - Run only one active Convex backend for a deployment at a time.
-- If using PlanetScale, set `MYSQL_URL`, not `POSTGRES_URL`.
+- Set exactly one of `POSTGRES_URL` or `MYSQL_URL`, depending on which managed
+  SQL product you are actually using.
 
 ### Files To Use
 
 Backend droplet:
 
-- `self-hosted/docker/docker-compose.yml`
 - `self-hosted/docker/docker-compose.backend-droplet.yml`
 - `self-hosted/docker/.env.backend.example`
 - `self-hosted/docker/setup_backend_droplet.sh`
@@ -162,18 +160,13 @@ cp self-hosted/docker/.env.backend.example self-hosted/docker/.env.backend
 - all R2 bucket variables
 - `CONVEX_CLOUD_ORIGIN`
 - `CONVEX_SITE_ORIGIN`
-- `CONVEX_DASHBOARD_ORIGIN`
-- `NEXT_PUBLIC_DEPLOYMENT_URL`
 - `CADDY_EMAIL`
-- `DASHBOARD_BASIC_AUTH_USERNAME`
-- `DASHBOARD_BASIC_AUTH_PASSWORD`
 
-4. Point DNS for the three public hostnames to the backend droplet before
+4. Point DNS for the two public hostnames to the backend droplet before
 running the setup script:
 
 - API hostname from `CONVEX_CLOUD_ORIGIN`
 - site hostname from `CONVEX_SITE_ORIGIN`
-- dashboard hostname from `CONVEX_DASHBOARD_ORIGIN`
 
 5. Run the end-to-end backend setup script:
 
@@ -187,7 +180,7 @@ The script will:
 - install Caddy if needed
 - write `/etc/caddy/Caddyfile` from the env file
 - start Caddy
-- start the backend, dashboard, and metrics adapter containers
+- start the backend and metrics adapter containers
 - validate the local services
 - print the generated Convex admin key
 
@@ -206,7 +199,6 @@ docker compose \
 ```sh
 curl -f http://127.0.0.1:3210/version
 curl -f http://127.0.0.1:9464/health
-curl -f http://127.0.0.1:6791
 ```
 
 ### Observability Droplet Setup
@@ -303,11 +295,7 @@ Keep these running alongside the Convex backend:
   `/metrics` output
 - VictoriaMetrics scraping Convex `/metrics`
 - Grafana for dashboards and alerting
-- The self-hosted Convex dashboard for per-function metrics and live logs
 - Optional log storage such as Loki or ELK for backend JSON logs
-
-The self-hosted flow for generating the admin key and opening the dashboard is
-documented in `self-hosted/README.md`.
 
 ## VictoriaMetrics Scrape Config
 
@@ -426,11 +414,9 @@ rate(sync_worker_query_retry_total[5m])
 
 Use these to catch large request payloads and oversized reactive transitions.
 
-## Use The Convex Dashboard For Per-Function Insight
+## Use Convex App Metrics For Per-Function Insight
 
-The dashboard is the easiest no-code way to inspect function-level behavior.
-
-Use the dashboard views backed by these routes under `/api/app_metrics/*`:
+Use the backend's admin app-metrics routes under `/api/app_metrics/*`:
 
 - `latency_percentiles`
 - `cache_hit_percentage`
@@ -481,7 +467,7 @@ Operational notes:
 - These are long-poll endpoints, not WebSockets.
 - They return after up to 60 seconds even when idle, so they are easy to poll
   from an external collector.
-- The dashboard and CLI already rely on these surfaces.
+- The CLI and other admin tooling can rely on these surfaces.
 
 ## Incident Mode
 
@@ -545,8 +531,8 @@ When something is slow:
 1. Check Grafana for `http_handle_duration_seconds`
 2. Check sync and WebSocket panels for `sync_update_queries_seconds`,
    `modify_query_to_transition_seconds`, and `backend_ws_send_delay_seconds`
-3. Open the Convex dashboard and inspect per-function latency percentiles and
-   cache hit percentage
+3. Inspect per-function latency percentiles and cache hit percentage via
+   `/api/app_metrics/*`
 4. Pull execution events from `stream_udf_execution` for the affected time range
 5. If the issue is still unclear, temporarily enable incident mode
 

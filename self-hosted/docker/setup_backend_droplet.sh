@@ -94,11 +94,7 @@ validate_config() {
   require_var INSTANCE_SECRET
   require_var CONVEX_CLOUD_ORIGIN
   require_var CONVEX_SITE_ORIGIN
-  require_var CONVEX_DASHBOARD_ORIGIN
-  require_var NEXT_PUBLIC_DEPLOYMENT_URL
   require_var CADDY_EMAIL
-  require_var DASHBOARD_BASIC_AUTH_USERNAME
-  require_var DASHBOARD_BASIC_AUTH_PASSWORD
   require_var AWS_REGION
   require_var AWS_ACCESS_KEY_ID
   require_var AWS_SECRET_ACCESS_KEY
@@ -126,23 +122,12 @@ validate_config() {
     https://*) ;;
     *) printf "CONVEX_SITE_ORIGIN must start with https:// for Caddy-managed TLS.\n" >&2; exit 1 ;;
   esac
-  case "$CONVEX_DASHBOARD_ORIGIN" in
-    https://*) ;;
-    *) printf "CONVEX_DASHBOARD_ORIGIN must start with https:// for Caddy-managed TLS.\n" >&2; exit 1 ;;
-  esac
-
-  if [[ "$NEXT_PUBLIC_DEPLOYMENT_URL" != "$CONVEX_CLOUD_ORIGIN" ]]; then
-    printf "NEXT_PUBLIC_DEPLOYMENT_URL should match CONVEX_CLOUD_ORIGIN for the dashboard.\n" >&2
-    exit 1
-  fi
 }
 
 write_caddyfile() {
-  local api_host site_host dashboard_host dashboard_hash temp_file
+  local api_host site_host temp_file
   api_host="$(url_host "$CONVEX_CLOUD_ORIGIN")"
   site_host="$(url_host "$CONVEX_SITE_ORIGIN")"
-  dashboard_host="$(url_host "$CONVEX_DASHBOARD_ORIGIN")"
-  dashboard_hash="$(caddy hash-password --plaintext "$DASHBOARD_BASIC_AUTH_PASSWORD")"
   temp_file="$(mktemp)"
 
   cat >"$temp_file" <<EOF
@@ -156,13 +141,6 @@ ${api_host} {
 
 ${site_host} {
     reverse_proxy 127.0.0.1:${SITE_PROXY_PORT:-3211}
-}
-
-${dashboard_host} {
-    basic_auth {
-        ${DASHBOARD_BASIC_AUTH_USERNAME} ${dashboard_hash}
-    }
-    reverse_proxy 127.0.0.1:${DASHBOARD_PORT:-6791}
 }
 EOF
 
@@ -204,7 +182,6 @@ generate_admin_key() {
 
 verify_services() {
   wait_for_url "http://127.0.0.1:${PORT:-3210}/version" "Convex backend"
-  wait_for_url "http://127.0.0.1:${DASHBOARD_PORT:-6791}" "Convex dashboard"
   wait_for_url "http://127.0.0.1:${METRICS_ADAPTER_PORT:-9464}/health" "metrics adapter"
 }
 
@@ -222,7 +199,6 @@ main() {
   printf "Backend droplet setup complete.\n"
   printf "API: %s\n" "$CONVEX_CLOUD_ORIGIN"
   printf "Site: %s\n" "$CONVEX_SITE_ORIGIN"
-  printf "Dashboard: %s\n" "$CONVEX_DASHBOARD_ORIGIN"
   printf "Metrics adapter: http://%s:%s/metrics\n" "${METRICS_ADAPTER_BIND_IP:-0.0.0.0}" "${METRICS_ADAPTER_PORT:-9464}"
   printf "Admin key: %s\n" "$admin_key"
 }

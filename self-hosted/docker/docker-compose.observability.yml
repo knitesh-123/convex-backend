@@ -6,6 +6,10 @@ services:
       LOG_FORMAT: ${LOG_FORMAT:-json}
       RUST_LOG: ${RUST_LOG:-info}
 
+  dashboard:
+    profiles:
+      - dashboard
+
   metricsadapter:
     image: ${METRICS_ADAPTER_IMAGE:-python:3.12-alpine}
     command:
