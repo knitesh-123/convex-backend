@@ -116,6 +116,7 @@ The script will:
 
 - install Docker and Docker Compose if needed
 - install Caddy if needed
+- run `ufw allow 80/tcp` and `ufw allow 443/tcp` if `ufw` is installed
 - write `/etc/caddy/Caddyfile`
 - start Caddy
 - start the backend and metrics adapter containers

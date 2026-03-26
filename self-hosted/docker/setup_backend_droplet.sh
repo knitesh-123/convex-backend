@@ -89,6 +89,15 @@ install_caddy() {
   $SUDO systemctl enable --now caddy
 }
 
+configure_ufw() {
+  if ! command -v ufw >/dev/null 2>&1; then
+    return
+  fi
+
+  $SUDO ufw allow 80/tcp
+  $SUDO ufw allow 443/tcp
+}
+
 validate_config() {
   require_var INSTANCE_NAME
   require_var INSTANCE_SECRET
@@ -189,6 +198,7 @@ main() {
   validate_config
   install_docker
   install_caddy
+  configure_ufw
   write_caddyfile
   start_backend
   verify_services
