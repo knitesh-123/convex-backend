@@ -146,7 +146,7 @@ EOF
 
   $SUDO mkdir -p /etc/caddy
   $SUDO mv "$temp_file" "$CADDYFILE_PATH"
-  $SUDO chown root:root "$CADDYFILE_PATH"
+  $SUDO chown root:caddy "$CADDYFILE_PATH"
   $SUDO chmod 640 "$CADDYFILE_PATH"
   $SUDO caddy validate --config "$CADDYFILE_PATH"
   $SUDO systemctl reload caddy
