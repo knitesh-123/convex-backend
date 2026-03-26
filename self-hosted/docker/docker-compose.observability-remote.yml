@@ -1,0 +1,31 @@
+services:
+  victoriametrics:
+    image: ${VICTORIAMETRICS_IMAGE:-victoriametrics/victoria-metrics:latest}
+    ports:
+      - "${VICTORIAMETRICS_BIND_IP:-127.0.0.1}:${VICTORIAMETRICS_PORT:-8428}:8428"
+    command:
+      - -promscrape.config=/etc/victoriametrics/promscrape.yml
+      - -storageDataPath=/victoria-metrics-data
+    volumes:
+      - ./observability/victoriametrics/promscrape.remote.yml:/etc/victoriametrics/promscrape.yml:ro
+      - victoriametrics_data:/victoria-metrics-data
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:latest}
+    ports:
+      - "${GRAFANA_BIND_IP:-0.0.0.0}:${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      victoriametrics:
+        condition: service_started
+
+volumes:
+  victoriametrics_data:
+  grafana_data:

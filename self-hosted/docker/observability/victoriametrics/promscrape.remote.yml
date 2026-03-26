@@ -1,0 +1,8 @@
+scrape_configs:
+  - job_name: convex
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          # Replace this with the backend droplet's private IP or private DNS.
+          - 10.0.0.10:9464

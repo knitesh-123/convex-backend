@@ -107,6 +107,177 @@ Edit `self-hosted/docker/.env.observability` to change any of the following:
 - `GRAFANA_ADMIN_USER`
 - `GRAFANA_ADMIN_PASSWORD`
 
+## DigitalOcean Split Deployment
+
+For a production-ish setup where the Convex server stays disposable, use two
+hosts:
+
+- Backend droplet: Convex backend, Convex dashboard, and `metricsadapter`
+- Observability droplet: VictoriaMetrics and Grafana
+- External services: SQL database and S3-compatible object storage such as R2
+
+Important rules:
+
+- Use the same `INSTANCE_NAME` and `INSTANCE_SECRET` everywhere for the same
+  deployment.
+- Use a fresh database when creating a brand-new deployment.
+- Run only one active Convex backend for a deployment at a time.
+- If using PlanetScale, set `MYSQL_URL`, not `POSTGRES_URL`.
+
+### Files To Use
+
+Backend droplet:
+
+- `self-hosted/docker/docker-compose.yml`
+- `self-hosted/docker/docker-compose.backend-observability.yml`
+- `self-hosted/docker/.env.backend.example`
+
+Observability droplet:
+
+- `self-hosted/docker/docker-compose.observability-remote.yml`
+- `self-hosted/docker/.env.observability-remote.example`
+- `self-hosted/docker/observability/victoriametrics/promscrape.remote.yml`
+
+### Backend Droplet Setup
+
+1. Clone the repo:
+
+```sh
+git clone https://github.com/get-convex/convex-backend.git
+cd convex-backend
+```
+
+2. Create the backend env file:
+
+```sh
+cp self-hosted/docker/.env.backend.example self-hosted/docker/.env.backend
+```
+
+3. Edit `self-hosted/docker/.env.backend` and fill in:
+
+- `INSTANCE_NAME`
+- `INSTANCE_SECRET`
+- exactly one of `MYSQL_URL` or `POSTGRES_URL`
+- all R2 bucket variables
+- `CONVEX_CLOUD_ORIGIN`
+- `CONVEX_SITE_ORIGIN`
+- `NEXT_PUBLIC_DEPLOYMENT_URL`
+
+4. Start the backend stack:
+
+```sh
+docker compose \
+  --env-file self-hosted/docker/.env.backend \
+  -f self-hosted/docker/docker-compose.yml \
+  -f self-hosted/docker/docker-compose.backend-observability.yml \
+  up -d
+```
+
+5. Generate the admin key from the running backend image:
+
+```sh
+docker compose \
+  --env-file self-hosted/docker/.env.backend \
+  -f self-hosted/docker/docker-compose.yml \
+  -f self-hosted/docker/docker-compose.backend-observability.yml \
+  exec backend sh -lc './generate_key "$INSTANCE_NAME" "$INSTANCE_SECRET"'
+```
+
+6. Verify the backend and metrics adapter:
+
+```sh
+curl -f http://127.0.0.1:3210/version
+curl -f http://127.0.0.1:9464/health
+curl -f http://127.0.0.1:6791
+```
+
+### Observability Droplet Setup
+
+1. Clone the repo:
+
+```sh
+git clone https://github.com/get-convex/convex-backend.git
+cd convex-backend
+```
+
+2. Create the observability env file:
+
+```sh
+cp self-hosted/docker/.env.observability-remote.example self-hosted/docker/.env.observability-remote
+```
+
+3. Edit `self-hosted/docker/.env.observability-remote` and set Grafana
+credentials.
+
+4. Edit `self-hosted/docker/observability/victoriametrics/promscrape.remote.yml`
+and replace `10.0.0.10:9464` with the backend droplet's private IP or private
+DNS name.
+
+5. Start VictoriaMetrics and Grafana:
+
+```sh
+docker compose \
+  --env-file self-hosted/docker/.env.observability-remote \
+  -f self-hosted/docker/docker-compose.observability-remote.yml \
+  up -d
+```
+
+6. Verify observability:
+
+```sh
+curl -f http://127.0.0.1:8428/health
+curl -f http://127.0.0.1:3000/api/health
+curl -s 'http://127.0.0.1:8428/api/v1/query?query=up'
+```
+
+### Migration / Rollout Order
+
+If you are moving from another self-hosted instance:
+
+1. Start the new backend droplet with fresh SQL + R2 configuration
+2. Deploy code with `npx convex deploy`
+3. Import data with `npx convex import --replace-all <backup.zip>`
+4. Verify the app on the new backend
+5. Shut down the old backend
+6. Start any alternate backend location only after the old one is stopped
+
+### Shutdown Commands
+
+Backend droplet:
+
+```sh
+docker compose \
+  --env-file self-hosted/docker/.env.backend \
+  -f self-hosted/docker/docker-compose.yml \
+  -f self-hosted/docker/docker-compose.backend-observability.yml \
+  down
+```
+
+Observability droplet:
+
+```sh
+docker compose \
+  --env-file self-hosted/docker/.env.observability-remote \
+  -f self-hosted/docker/docker-compose.observability-remote.yml \
+  down
+```
+
+### Recommended Firewall Rules
+
+Backend droplet:
+
+- allow `22/tcp` from your IP
+- allow `3210/tcp` and `3211/tcp` from wherever your app or reverse proxy needs
+  them
+- allow `6791/tcp` only from your IP or VPN
+- allow `9464/tcp` only from the observability droplet over private networking
+
+Observability droplet:
+
+- allow `22/tcp` from your IP
+- allow `3000/tcp` only from your IP or VPN
+- do not expose `8428/tcp` publicly unless you have a specific need
+
 ## Required Services
 
 Keep these running alongside the Convex backend:
@@ -157,7 +328,7 @@ Recommended query:
 ```promql
 histogram_quantile(
   0.95,
-  sum by (le, endpoint, method, status) (
+  sum by (vmrange, endpoint, method, status) (
     rate(http_handle_duration_seconds_bucket[5m])
   )
 )
@@ -179,7 +350,7 @@ Recommended queries:
 ```promql
 histogram_quantile(
   0.95,
-  sum by (le, endpoint) (
+  sum by (vmrange, endpoint) (
     rate(backend_ws_send_delay_seconds_bucket[5m])
   )
 )
@@ -209,21 +380,21 @@ Recommended queries:
 ```promql
 histogram_quantile(
   0.95,
-  sum by (le, partition_id) (
+  sum by (vmrange, partition_id) (
     rate(sync_update_queries_seconds_bucket[5m])
   )
 )
 
 histogram_quantile(
   0.95,
-  sum by (le, partition_id) (
+  sum by (vmrange, partition_id) (
     rate(modify_query_to_transition_seconds_bucket[5m])
   )
 )
 
 histogram_quantile(
   0.95,
-  sum by (le, partition_id) (
+  sum by (vmrange, partition_id) (
     rate(sync_query_invalidation_lag_seconds_bucket[5m])
   )
 )

@@ -1,0 +1,24 @@
+services:
+  backend:
+    environment:
+      DISABLE_METRICS_ENDPOINT: ${DISABLE_METRICS_ENDPOINT:-false}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      RUST_LOG: ${RUST_LOG:-info}
+      REDACT_LOGS_TO_CLIENT: ${REDACT_LOGS_TO_CLIENT:-true}
+
+  metricsadapter:
+    image: ${METRICS_ADAPTER_IMAGE:-python:3.12-alpine}
+    command:
+      - python
+      - /app/metrics_adapter.py
+    environment:
+      UPSTREAM_METRICS_URL: http://backend:3210/metrics
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "9464"
+    ports:
+      - "${METRICS_ADAPTER_BIND_IP:-0.0.0.0}:${METRICS_ADAPTER_PORT:-9464}:9464"
+    volumes:
+      - ./observability/metrics_adapter/metrics_adapter.py:/app/metrics_adapter.py:ro
+    depends_on:
+      backend:
+        condition: service_healthy
