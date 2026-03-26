@@ -103,7 +103,7 @@ self-hosted/railway/observability/grafana/Dockerfile
 Attach a persistent volume mounted at:
 
 ```text
-/var/lib/grafana
+/data
 ```
 
 Set these env vars:
@@ -113,6 +113,9 @@ GF_SECURITY_ADMIN_USER=admin
 GF_SECURITY_ADMIN_PASSWORD=replace-with-a-strong-password
 GF_USERS_ALLOW_SIGN_UP=false
 VICTORIAMETRICS_URL=http://<victoriametrics-internal-or-public-url>
+GF_PATHS_DATA=/data
+GF_PATHS_LOGS=/data/logs
+GF_PATHS_PLUGINS=/data/plugins
 ```
 
 Prefer using a Railway internal/private URL for `VICTORIAMETRICS_URL` if your

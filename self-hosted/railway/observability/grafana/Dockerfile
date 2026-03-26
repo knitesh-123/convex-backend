@@ -10,6 +10,4 @@ RUN chmod +x /entrypoint.sh && \
     mkdir -p /etc/grafana/provisioning/datasources && \
     chown -R 472:0 /entrypoint.sh /etc/grafana/provisioning /var/lib/grafana/dashboards
 
-USER grafana
-
 ENTRYPOINT ["/entrypoint.sh"]
