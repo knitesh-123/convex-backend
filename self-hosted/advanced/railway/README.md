@@ -35,6 +35,9 @@ setup steps to make it fully work.
 1. Deploying the template
 2. Generating admin key with railway ssh
 
+For running only the observability stack on Railway while keeping the backend on
+another host, see `self-hosted/advanced/railway/observability.md`.
+
 Steps:
 
 1. Deploying the template

@@ -126,6 +126,7 @@ e.g., instead of setting `CONVEX_DEPLOY_KEY`, you'll need to set
 - [Advanced tuning with knobs](./advanced/knobs.md)
 - [Convex server observability](./advanced/convex_server_observability.md)
 - [Backend droplet setup](./advanced/backend_droplet_setup.md)
+- [Railway observability setup](./advanced/railway/observability.md)
 
 # Limitations
 

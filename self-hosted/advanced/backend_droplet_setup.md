@@ -80,6 +80,12 @@ Fill in at least:
 - `S3_STORAGE_FILES_BUCKET`
 - `S3_STORAGE_SEARCH_BUCKET`
 
+Optional, if an external VictoriaMetrics service needs to scrape this droplet:
+
+- `METRICS_PUBLIC_PATH`
+- `METRICS_BASIC_AUTH_USERNAME`
+- `METRICS_BASIC_AUTH_PASSWORD`
+
 For Cloudflare R2, use:
 
 ```dotenv
@@ -106,6 +112,12 @@ That produces this routing:
 - `convex-api.example.com` -> local backend on `127.0.0.1:3210`
 - `convex-site.example.com` -> local site proxy on `127.0.0.1:3211`
 
+If `METRICS_BASIC_AUTH_USERNAME` and `METRICS_BASIC_AUTH_PASSWORD` are set, the
+API hostname will also expose a protected metrics path such as:
+
+- `https://convex-api.example.com/_metrics` -> local metrics adapter on
+  `127.0.0.1:9464`
+
 ## Run The Setup Script
 
 ```sh
@@ -122,6 +134,9 @@ The script will:
 - start the backend and metrics adapter containers
 - verify local health endpoints
 - print the generated Convex admin key
+
+If protected public metrics are enabled, the script also prints the public
+metrics URL.
 
 ## What The Script Starts
 
@@ -200,6 +215,9 @@ Do not expose publicly:
 - `3211/tcp`
 
 Those stay behind Caddy on localhost.
+
+If you expose protected public metrics for Railway observability, port `9464`
+can stay private; Caddy proxies the public metrics path to it locally.
 
 ## Notes
 

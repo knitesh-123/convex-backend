@@ -38,6 +38,10 @@ require_var() {
   fi
 }
 
+metrics_route_enabled() {
+  [[ -n "${METRICS_BASIC_AUTH_USERNAME:-}" && -n "${METRICS_BASIC_AUTH_PASSWORD:-}" ]]
+}
+
 url_host() {
   local value="$1"
   value="${value#http://}"
@@ -131,13 +135,41 @@ validate_config() {
     https://*) ;;
     *) printf "CONVEX_SITE_ORIGIN must start with https:// for Caddy-managed TLS.\n" >&2; exit 1 ;;
   esac
+
+  if [[ -n "${METRICS_BASIC_AUTH_USERNAME:-}" || -n "${METRICS_BASIC_AUTH_PASSWORD:-}" ]]; then
+    if [[ -z "${METRICS_BASIC_AUTH_USERNAME:-}" || -z "${METRICS_BASIC_AUTH_PASSWORD:-}" ]]; then
+      printf "Set both METRICS_BASIC_AUTH_USERNAME and METRICS_BASIC_AUTH_PASSWORD, or neither.\n" >&2
+      exit 1
+    fi
+  fi
+
+  if [[ -n "${METRICS_PUBLIC_PATH:-}" && "${METRICS_PUBLIC_PATH}" != /* ]]; then
+    printf "METRICS_PUBLIC_PATH must start with '/'.\n" >&2
+    exit 1
+  fi
 }
 
 write_caddyfile() {
-  local api_host site_host temp_file
+  local api_host site_host temp_file metrics_block metrics_hash metrics_path
   api_host="$(url_host "$CONVEX_CLOUD_ORIGIN")"
   site_host="$(url_host "$CONVEX_SITE_ORIGIN")"
   temp_file="$(mktemp)"
+  metrics_block=""
+
+  if metrics_route_enabled; then
+    metrics_path="${METRICS_PUBLIC_PATH:-/_metrics}"
+    metrics_hash="$(caddy hash-password --plaintext "$METRICS_BASIC_AUTH_PASSWORD")"
+    metrics_block="    @metrics path ${metrics_path}
+    handle @metrics {
+        basic_auth {
+            ${METRICS_BASIC_AUTH_USERNAME} ${metrics_hash}
+        }
+        rewrite * /metrics
+        reverse_proxy 127.0.0.1:${METRICS_ADAPTER_PORT:-9464}
+    }
+
+"
+  fi
 
   cat >"$temp_file" <<EOF
 {
@@ -145,7 +177,7 @@ write_caddyfile() {
 }
 
 ${api_host} {
-    reverse_proxy 127.0.0.1:${PORT:-3210}
+${metrics_block}    reverse_proxy 127.0.0.1:${PORT:-3210}
 }
 
 ${site_host} {
@@ -210,6 +242,9 @@ main() {
   printf "API: %s\n" "$CONVEX_CLOUD_ORIGIN"
   printf "Site: %s\n" "$CONVEX_SITE_ORIGIN"
   printf "Metrics adapter: http://%s:%s/metrics\n" "${METRICS_ADAPTER_BIND_IP:-0.0.0.0}" "${METRICS_ADAPTER_PORT:-9464}"
+  if metrics_route_enabled; then
+    printf "Public metrics URL: %s%s\n" "$CONVEX_CLOUD_ORIGIN" "${METRICS_PUBLIC_PATH:-/_metrics}"
+  fi
   printf "Admin key: %s\n" "$admin_key"
 }
 

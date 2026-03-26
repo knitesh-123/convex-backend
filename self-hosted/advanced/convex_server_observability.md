@@ -137,6 +137,10 @@ Observability droplet:
 - `self-hosted/docker/.env.observability-remote.example`
 - `self-hosted/docker/observability/victoriametrics/promscrape.remote.yml`
 
+Railway observability option:
+
+- `self-hosted/advanced/railway/observability.md`
+
 ### Backend Droplet Setup
 
 1. Clone the repo:
