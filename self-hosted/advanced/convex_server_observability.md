@@ -27,7 +27,7 @@ execution streams, and the self-hosted dashboard.
 ## Concrete Plan
 
 1. Run the backend in observability mode
-2. Scrape Convex's built-in `/metrics` endpoint with Prometheus
+2. Scrape Convex's built-in `/metrics` endpoint with VictoriaMetrics
 3. Use Grafana for server-wide latency dashboards
 4. Use the self-hosted Convex dashboard for per-function metrics and live logs
 5. Collect `stream_udf_execution` / `stream_function_logs` for request-by-request
@@ -51,11 +51,69 @@ Notes:
 - If we build our own image, prefer `--build-arg debug=1` so the binary is not
   stripped. That helps `perf` and eBPF tooling later.
 
+## Starter Compose Stack
+
+This repo now includes an observability overlay compose file at
+`self-hosted/docker/docker-compose.observability.yml`.
+
+It does three things:
+
+- switches the backend service to our local debug-friendly image
+- enables Convex `/metrics`
+- adds a small metrics adapter, VictoriaMetrics, and Grafana
+
+The canonical env file for this stack is:
+
+- `self-hosted/docker/.env.observability`
+
+An example copy is committed at:
+
+- `self-hosted/docker/.env.observability.example`
+
+Run it with:
+
+```sh
+docker compose \
+  --env-file self-hosted/docker/.env.observability \
+  -f self-hosted/docker/docker-compose.yml \
+  -f self-hosted/docker/docker-compose.observability.yml \
+  up -d
+```
+
+Default ports:
+
+- Convex backend: `3210`
+- Convex site proxy / HTTP actions: `3211`
+- Convex dashboard: `6791`
+- VictoriaMetrics: `8428`
+- Grafana: `3000`
+
+Default Grafana login:
+
+- username: `admin`
+- password: `admin`
+
+Edit `self-hosted/docker/.env.observability` to change any of the following:
+
+- `OBSERVABILITY_BACKEND_IMAGE`
+- `PORT`
+- `SITE_PROXY_PORT`
+- `DASHBOARD_PORT`
+- `VICTORIAMETRICS_PORT`
+- `GRAFANA_PORT`
+- `DISABLE_METRICS_ENDPOINT`
+- `LOG_FORMAT`
+- `RUST_LOG`
+- `GRAFANA_ADMIN_USER`
+- `GRAFANA_ADMIN_PASSWORD`
+
 ## Required Services
 
 Keep these running alongside the Convex backend:
 
-- Prometheus scraping Convex `/metrics`
+- A metrics adapter that strips invalid `vmhistogram` metadata from Convex's
+  `/metrics` output
+- VictoriaMetrics scraping Convex `/metrics`
 - Grafana for dashboards and alerting
 - The self-hosted Convex dashboard for per-function metrics and live logs
 - Optional log storage such as Loki or ELK for backend JSON logs
@@ -63,7 +121,7 @@ Keep these running alongside the Convex backend:
 The self-hosted flow for generating the admin key and opening the dashboard is
 documented in `self-hosted/README.md`.
 
-## Prometheus Scrape Config
+## VictoriaMetrics Scrape Config
 
 Minimal scrape job:
 
@@ -73,10 +131,18 @@ scrape_configs:
     metrics_path: /metrics
     scrape_interval: 15s
     static_configs:
-      - targets: ["backend:3210"]
+      - targets: ["metricsadapter:9464"]
 ```
 
 Convex exposes `/metrics` by default unless `DISABLE_METRICS_ENDPOINT=true`.
+
+Note:
+
+- Convex exports `vmhistogram` metadata lines, which are rejected by both stock
+  Prometheus and VictoriaMetrics scrape parsing.
+- The `metricsadapter` sidecar strips only the invalid `# TYPE ... vmhistogram`
+  lines and leaves the metric samples intact.
+- Grafana still uses the Prometheus datasource type against VictoriaMetrics' API.
 
 ## What To Watch In Grafana
 
@@ -301,7 +367,7 @@ When something is slow:
 Whenever we change any of the following, update this document:
 
 - backend runtime env vars
-- Prometheus scrape settings
+- VictoriaMetrics scrape settings
 - Grafana dashboards or alert thresholds
 - log collection approach
 - incident-mode settings

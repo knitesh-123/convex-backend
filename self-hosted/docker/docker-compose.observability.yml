@@ -1,0 +1,56 @@
+services:
+  backend:
+    image: ${OBSERVABILITY_BACKEND_IMAGE:-convex-backend-observability:latest}
+    environment:
+      DISABLE_METRICS_ENDPOINT: ${DISABLE_METRICS_ENDPOINT:-false}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      RUST_LOG: ${RUST_LOG:-info}
+
+  metricsadapter:
+    image: ${METRICS_ADAPTER_IMAGE:-python:3.12-alpine}
+    command:
+      - python
+      - /app/metrics_adapter.py
+    environment:
+      UPSTREAM_METRICS_URL: http://backend:3210/metrics
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "9464"
+    volumes:
+      - ./observability/metrics_adapter/metrics_adapter.py:/app/metrics_adapter.py:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  victoriametrics:
+    image: ${VICTORIAMETRICS_IMAGE:-victoriametrics/victoria-metrics:latest}
+    ports:
+      - "${VICTORIAMETRICS_PORT:-8428}:8428"
+    command:
+      - -promscrape.config=/etc/victoriametrics/promscrape.yml
+      - -storageDataPath=/victoria-metrics-data
+    volumes:
+      - ./observability/victoriametrics/promscrape.yml:/etc/victoriametrics/promscrape.yml:ro
+      - victoriametrics_data:/victoria-metrics-data
+    depends_on:
+      metricsadapter:
+        condition: service_started
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:latest}
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      victoriametrics:
+        condition: service_started
+
+volumes:
+  victoriametrics_data:
+  grafana_data:

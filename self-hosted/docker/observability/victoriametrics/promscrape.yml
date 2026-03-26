@@ -1,0 +1,7 @@
+scrape_configs:
+  - job_name: convex
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - metricsadapter:9464

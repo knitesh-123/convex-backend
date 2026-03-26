@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Convex Server
+    orgId: 1
+    folder: Convex
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
