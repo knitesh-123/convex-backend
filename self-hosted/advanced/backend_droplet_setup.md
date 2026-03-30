@@ -86,6 +86,12 @@ Optional, if an external VictoriaMetrics service needs to scrape this droplet:
 - `METRICS_BASIC_AUTH_USERNAME`
 - `METRICS_BASIC_AUTH_PASSWORD`
 
+Optional, if you use a small managed Postgres plan and need to reduce backend
+connection pressure:
+
+- `POSTGRES_MAX_CONNECTIONS`
+- `POSTGRES_MAX_CACHED_STATEMENTS`
+
 For Cloudflare R2, use:
 
 ```dotenv
@@ -148,6 +154,10 @@ Containers:
 
 - `backend`
 - `metricsadapter`
+
+Both containers use Docker restart policy `unless-stopped`, so if the Convex
+process exits or the machine reboots, Docker will bring them back automatically
+once the Docker daemon is running.
 
 Bindings:
 
@@ -223,9 +233,19 @@ can stay private; Caddy proxies the public metrics path to it locally.
 
 - No custom backend image build is required for this setup; it uses the
   published Convex backend image.
+- Crash restart is handled by Docker restart policy in
+  `self-hosted/docker/docker-compose.backend-droplet.yml`.
 - Run only one active Convex backend at a time for a given deployment.
 - If you move the deployment to another machine, reuse the same:
   - `INSTANCE_NAME`
   - `INSTANCE_SECRET`
   - SQL URL
   - R2 configuration
+- Convex defaults to a Postgres pool cap of `128` connections and `128` cached
+  prepared statements per connection. On small managed Postgres plans this can
+  be too high. A good starting point is:
+
+```dotenv
+POSTGRES_MAX_CONNECTIONS=16
+POSTGRES_MAX_CACHED_STATEMENTS=32
+```

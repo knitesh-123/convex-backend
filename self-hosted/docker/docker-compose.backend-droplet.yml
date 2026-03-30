@@ -1,6 +1,7 @@
 services:
   backend:
     image: ${CONVEX_BACKEND_IMAGE:-ghcr.io/get-convex/convex-backend:latest}
+    restart: unless-stopped
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
@@ -35,6 +36,8 @@ services:
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - MYSQL_URL
       - POSTGRES_URL
+      - POSTGRES_MAX_CACHED_STATEMENTS
+      - POSTGRES_MAX_CONNECTIONS
       - REDACT_LOGS_TO_CLIENT=${REDACT_LOGS_TO_CLIENT:-true}
       - RUST_BACKTRACE
       - RUST_LOG=${RUST_LOG:-info}
@@ -51,6 +54,7 @@ services:
 
   metricsadapter:
     image: ${METRICS_ADAPTER_IMAGE:-python:3.12-alpine}
+    restart: unless-stopped
     command:
       - python
       - /app/metrics_adapter.py
